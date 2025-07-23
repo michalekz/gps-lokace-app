@@ -1,71 +1,114 @@
-import flet as ft
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.popup import Popup
+from kivy.clock import Clock
 import re
 import urllib.parse
 import os
 import requests
 
+
 class LocationProcessor:
     def expand_short_url(self, url):
-        """Rozbalení zkrácených URL (goo.gl, maps.app.goo.gl)"""
+        """Rozbalení zkrácených URL (goo.gl, maps.app.goo.gl, mapy.cz/s/)"""
         try:
-            if 'goo.gl' in url or 'maps.app.goo.gl' in url:
-                # Následování redirectů pro získání plné URL
+            if 'goo.gl' in url or 'maps.app.goo.gl' in url or 'mapy.cz/s/' in url or 'mapy.com/s/' in url:
                 response = requests.head(url, allow_redirects=True, timeout=10)
                 return response.url
             return url
         except Exception as e:
             print(f"Chyba při rozbalování URL: {e}")
             return url
-    
+
     def extract_coordinates(self, url):
-        """Extrakce GPS souřadnic z Google Maps URL"""
-        # Nejdřív zkus rozbalit zkrácené URL
+        """Extrakce GPS souřadnic z Google Maps a Mapy.cz URL"""
         expanded_url = self.expand_short_url(url)
-        
-        # Dekódování URL
         decoded_url = urllib.parse.unquote(expanded_url)
         
         print(f"Původní URL: {url}")
         print(f"Rozbalená URL: {expanded_url}")
         print(f"Dekódovaná URL: {decoded_url}")
         
-        # Různé formáty Google Maps URL
+        if 'mapy.cz' in decoded_url or 'mapy.com' in decoded_url:
+            return self.extract_mapy_cz_coordinates(decoded_url)
+        else:
+            return self.extract_google_maps_coordinates(decoded_url)
+
+    def extract_mapy_cz_coordinates(self, url):
+        """Extrakce souřadnic z Mapy.cz URL"""
+        print("Parsování Mapy.cz URL...")
+        
         patterns = [
-            # Standardní @lat,lng,zoom
-            r'@(-?\d+\.?\d*),(-?\d+\.?\d*),\d+',
-            # /lat,lng/ formát
-            r'/(-?\d+\.?\d*),(-?\d+\.?\d*)/',
-            # ?q=lat,lng
-            r'q=(-?\d+\.?\d*),(-?\d+\.?\d*)',
-            # ll=lat,lng (query parameter)
-            r'll=(-?\d+\.?\d*),(-?\d+\.?\d*)',
-            # center=lat,lng
-            r'center=(-?\d+\.?\d*),(-?\d+\.?\d*)',
-            # coordinates v URL path
-            r'maps/place/[^/]*/@(-?\d+\.?\d*),(-?\d+\.?\d*)',
-            # data coordinates v URL
-            r'!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)',
-            # další možný formát
-            r'coordinates=(-?\d+\.?\d*),(-?\d+\.?\d*)'
+            r'[&?]x=([0-9.-]+)[&]y=([0-9.-]+)',
+            r'[&?]query=([0-9.-]+)[,\s]+([0-9.-]+)',
+            r'[&?]center=([0-9.-]+)[,\s]+([0-9.-]+)',
+            r'/misto/([0-9.-]+),([0-9.-]+)',
+            r'#.*?([0-9.-]+),([0-9.-]+)'
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, decoded_url)
+            match = re.search(pattern, url)
             if match:
                 try:
-                    lat = float(match.group(1))
-                    lng = float(match.group(2))
-                    # Kontrola platných souřadnic
+                    lng = float(match.group(1))
+                    lat = float(match.group(2))
+                    
                     if -90 <= lat <= 90 and -180 <= lng <= 180:
-                        print(f"Nalezeny souřadnice: {lat}, {lng}")
+                        print(f"Nalezeny souřadnice Mapy.cz: {lat}, {lng}")
                         return lat, lng
                 except (ValueError, IndexError):
                     continue
         
-        # Pokud nic nenašlo, pokus o extrakci z jakékoliv části URL
-        # Hledání jakýchkoliv dvou čísel oddělených čárkou
+        number_pattern = r'([0-9]+\.[0-9]+),([0-9]+\.[0-9]+)'
+        matches = re.findall(number_pattern, url)
+        
+        for match in matches:
+            try:
+                num1, num2 = float(match[0]), float(match[1])
+                
+                if -90 <= num1 <= 90 and -180 <= num2 <= 180:
+                    print(f"Nalezeny souřadnice (lat,lng): {num1}, {num2}")
+                    return num1, num2
+                elif -90 <= num2 <= 90 and -180 <= num1 <= 180:
+                    print(f"Nalezeny souřadnice (lng,lat): {num2}, {num1}")
+                    return num2, num1
+            except ValueError:
+                continue
+                
+        return None
+
+    def extract_google_maps_coordinates(self, url):
+        """Extrakce souřadnic z Google Maps URL"""
+        print("Parsování Google Maps URL...")
+        
+        patterns = [
+            r'@(-?\d+\.?\d*),(-?\d+\.?\d*),\d+',
+            r'/(-?\d+\.?\d*),(-?\d+\.?\d*)/',
+            r'q=(-?\d+\.?\d*),(-?\d+\.?\d*)',
+            r'll=(-?\d+\.?\d*),(-?\d+\.?\d*)',
+            r'center=(-?\d+\.?\d*),(-?\d+\.?\d*)',
+            r'maps/place/[^/]*/@(-?\d+\.?\d*),(-?\d+\.?\d*)',
+            r'!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)',
+            r'coordinates=(-?\d+\.?\d*),(-?\d+\.?\d*)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                try:
+                    lat = float(match.group(1))
+                    lng = float(match.group(2))
+                    if -90 <= lat <= 90 and -180 <= lng <= 180:
+                        print(f"Nalezeny souřadnice Google Maps: {lat}, {lng}")
+                        return lat, lng
+                except (ValueError, IndexError):
+                    continue
+        
         number_pattern = r'(-?\d+\.?\d+),(-?\d+\.?\d+)'
-        matches = re.findall(number_pattern, decoded_url)
+        matches = re.findall(number_pattern, url)
         
         for match in matches:
             try:
@@ -78,174 +121,201 @@ class LocationProcessor:
                 continue
         
         return None
-    
+
     def extract_place_name(self, url):
         """Extrakce názvu místa z URL"""
-        # Nejdřív zkus rozbalit zkrácené URL
         expanded_url = self.expand_short_url(url)
         decoded_url = urllib.parse.unquote(expanded_url)
         
+        if 'mapy.cz' in decoded_url or 'mapy.com' in decoded_url:
+            return self.extract_mapy_cz_place_name(decoded_url)
+        else:
+            return self.extract_google_maps_place_name(decoded_url)
+
+    def extract_mapy_cz_place_name(self, url):
+        """Extrakce názvu místa z Mapy.cz URL"""
         patterns = [
-            # /place/Název
+            r'[&?]q=([^&]+)',
+            r'[&?]query=([^&]+)',
+            r'/misto/([^/?]+)',
+            r'/search/([^/?]+)',
+            r'[&?]name=([^&]+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                name = match.group(1)
+                name = name.replace('+', ' ').replace('%20', ' ').replace('%2C', ', ')
+                name = name.replace('-', ' ').strip()
+                name = re.sub(r'[0-9]+\.[0-9]+[,\s]+[0-9]+\.[0-9]+', '', name).strip()
+                
+                if name and len(name) > 2 and not name.replace(',', '').replace('.', '').replace(' ', '').isdigit():
+                    return name
+        
+        return None
+
+    def extract_google_maps_place_name(self, url):
+        """Extrakce názvu místa z Google Maps URL"""
+        patterns = [
             r'/place/([^/@]+)',
-            # q=Název (před souřadnicemi)
             r'q=([^&@,]+)',
-            # search/Název
             r'search/([^/]+)',
-            # data v URL
             r'data=.*?([A-Za-z\s]+).*?@'
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, decoded_url)
+            match = re.search(pattern, url)
             if match:
                 name = match.group(1)
-                # Čištění názvu
                 name = name.replace('+', ' ').replace('%20', ' ').replace('%2C', ', ')
-                # Odstranění souřadnic z názvu
                 name = re.sub(r'[-+]?\d*\.?\d+,[-+]?\d*\.?\d+', '', name).strip()
-                # Odstranění speciálních znaků na konci
                 name = re.sub(r'[/@]+$', '', name).strip()
                 if name and len(name) > 2 and not name.replace(',', '').replace('.', '').replace('-', '').replace(' ', '').isdigit():
                     return name
         
         return None
 
-def main(page: ft.Page):
-    page.title = "GPS Lokace z Google Maps"
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.window_width = 400
-    page.window_height = 600
+
+class GPSLocationApp(App):
+    def build(self):
+        self.title = 'GPS Lokace z Map'
+        
+        # Hlavní layout
+        main_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        
+        # Nadpis
+        title_label = Label(
+            text='GPS Lokace z Map',
+            size_hint_y=None,
+            height=50,
+            font_size=20
+        )
+        main_layout.add_widget(title_label)
+        
+        # URL input
+        self.url_input = TextInput(
+            hint_text='Vložte odkaz z Google Maps nebo Mapy.cz...',
+            size_hint_y=None,
+            height=40,
+            multiline=False
+        )
+        main_layout.add_widget(self.url_input)
+        
+        # Tlačítko pro analýzu
+        analyze_btn = Button(
+            text='Analyzovat lokaci',
+            size_hint_y=None,
+            height=50
+        )
+        analyze_btn.bind(on_press=self.analyze_location)
+        main_layout.add_widget(analyze_btn)
+        
+        # Výsledky
+        self.name_label = Label(
+            text='Název: -',
+            size_hint_y=None,
+            height=30,
+            text_size=(None, None),
+            halign='left'
+        )
+        
+        self.coords_label = Label(
+            text='Souřadnice: -',
+            size_hint_y=None,
+            height=30,
+            text_size=(None, None),
+            halign='left'
+        )
+        
+        self.address_label = Label(
+            text='Adresa: -',
+            size_hint_y=None,
+            height=60,
+            text_size=(None, None),
+            halign='left'
+        )
+        
+        main_layout.add_widget(self.name_label)
+        main_layout.add_widget(self.coords_label)
+        main_layout.add_widget(self.address_label)
+        
+        # Tlačítko pro vymazání
+        clear_btn = Button(
+            text='Vymazat',
+            size_hint_y=None,
+            height=40
+        )
+        clear_btn.bind(on_press=self.clear_data)
+        main_layout.add_widget(clear_btn)
+        
+        # Kontrola sdíleného URL při spuštění
+        Clock.schedule_once(self.check_shared_url, 0.5)
+        
+        return main_layout
     
-    # UI komponenty
-    title = ft.Text("GPS Lokace z Google Maps", size=20, weight=ft.FontWeight.BOLD)
-    
-    url_input = ft.TextField(
-        label="URL z Google Maps",
-        hint_text="Vložte odkaz nebo použijte Sdílet...",
-        multiline=False,
-        expand=True
-    )
-    
-    name_result = ft.Text("Název: -", selectable=True)
-    coords_result = ft.Text("Souřadnice: -", selectable=True)
-    address_result = ft.Text("Adresa: -", selectable=True)
-    
-    # Intent handler pro Android
-    def on_route_change(e):
-        """Zpracování intent dat z Androidu"""
-        if page.route.startswith("/share"):
-            # Extrakce URL z route
-            shared_url = page.route.replace("/share/", "").replace("/share", "")
-            if shared_url:
-                url_input.value = urllib.parse.unquote(shared_url)
-                process_location(None)
-                name_result.value += ' (Ze sdílení)'
-                page.update()
-    
-    page.on_route_change = on_route_change
-    
-    def process_location(e):
-        """Zpracování URL z Google Maps"""
-        url = url_input.value.strip()
+    def analyze_location(self, instance):
+        """Analýza URL"""
+        url = self.url_input.text.strip()
         
         if not url:
-            show_error("Vložte prosím URL odkaz")
+            self.show_error("Vložte prosím URL odkaz")
             return
-            
+        
         try:
-            # Vytvoř instanci pro použití metod
             processor = LocationProcessor()
             coords = processor.extract_coordinates(url)
             
             if coords:
                 lat, lng = coords
-                coords_result.value = f'Souřadnice: {lat:.6f}, {lng:.6f}'
+                self.coords_label.text = f'Souřadnice: {lat:.6f}, {lng:.6f}'
                 
                 name = processor.extract_place_name(url)
                 if name:
-                    name_result.value = f'Název: {name}'
+                    self.name_label.text = f'Název: {name}'
                 else:
-                    name_result.value = 'Název: Neznámá lokace'
+                    self.name_label.text = 'Název: Neznámá lokace'
                 
-                address_result.value = f'Zeměpisná šířka: {lat:.6f}°\nZeměpisná délka: {lng:.6f}°'
+                self.address_label.text = f'Zeměpisná šířka: {lat:.6f}°\nZeměpisná délka: {lng:.6f}°'
                 
             else:
-                show_error("Nepodařilo se extrahovat souřadnice z URL")
+                self.show_error("Nepodařilo se extrahovat souřadnice z URL")
                 
-        except Exception as ex:
-            show_error(f"Chyba při zpracování: {str(ex)}")
-        
-        page.update()
+        except Exception as e:
+            self.show_error(f"Chyba při zpracování: {str(e)}")
     
-    def show_error(message):
-        """Zobrazení chybové zprávy"""
-        name_result.value = f'Chyba: {message}'
-        coords_result.value = 'Souřadnice: -'
-        address_result.value = 'Adresa: -'
+    def show_error(self, message):
+        """Zobrazení chyby"""
+        self.name_label.text = f'Chyba: {message}'
+        self.coords_label.text = 'Souřadnice: -'
+        self.address_label.text = 'Adresa: -'
     
-    def clear_data(e):
-        """Vymazání všech dat"""
-        url_input.value = ''
-        name_result.value = 'Název: -'
-        coords_result.value = 'Souřadnice: -'
-        address_result.value = 'Adresa: -'
-        page.update()
+    def clear_data(self, instance):
+        """Vymazání dat"""
+        self.url_input.text = ''
+        self.name_label.text = 'Název: -'
+        self.coords_label.text = 'Souřadnice: -'
+        self.address_label.text = 'Adresa: -'
     
-    def check_shared_url():
+    def check_shared_url(self, dt):
         """Kontrola sdíleného URL při spuštění"""
         try:
-            shared_url_file = os.path.join(os.getcwd(), 'shared_url.txt')
+            shared_url_file = '/data/data/org.test.gpslokace/files/shared_url.txt'
             
             if os.path.exists(shared_url_file):
                 with open(shared_url_file, 'r') as f:
                     shared_url = f.read().strip()
                 
                 if shared_url:
-                    url_input.value = shared_url
-                    process_location(None)
-                    name_result.value += ' (Automaticky ze sdílení)'
+                    self.url_input.text = shared_url
+                    self.analyze_location(None)
+                    self.name_label.text += ' (Ze sdílení)'
                 
                 os.remove(shared_url_file)
-                page.update()
                 
         except Exception as e:
             print(f"Chyba při kontrole sdíleného URL: {e}")
-    
-    # Tlačítka
-    process_btn = ft.ElevatedButton(
-        "Analyzovat lokaci",
-        on_click=process_location,
-        width=200
-    )
-    
-    clear_btn = ft.OutlinedButton(
-        "Vymazat",
-        on_click=clear_data,
-        width=200
-    )
-    
-    # Layout
-    page.add(
-        ft.Container(
-            ft.Column([
-                title,
-                ft.Divider(),
-                url_input,
-                ft.Row([process_btn], alignment=ft.MainAxisAlignment.CENTER),
-                ft.Divider(),
-                name_result,
-                coords_result,
-                address_result,
-                ft.Divider(),
-                ft.Row([clear_btn], alignment=ft.MainAxisAlignment.CENTER),
-            ], spacing=10),
-            padding=20
-        )
-    )
-    
-    # Kontrola sdíleného URL při spuštění
-    check_shared_url()
 
-if __name__ == "__main__":
-    ft.app(target=main)
+
+if __name__ == '__main__':
+    GPSLocationApp().run()

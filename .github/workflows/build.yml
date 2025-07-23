@@ -1,0 +1,51 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-20.04
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y autoconf automake libtool pkg-config
+        sudo apt install -y build-essential git unzip openjdk-8-jdk
+        sudo apt install -y python3-dev libsdl2-dev libsdl2-image-dev
+        sudo apt install -y libsdl2-mixer-dev libsdl2-ttf-dev libgl1-mesa-dev
+    
+    - name: Set up Java
+      run: |
+        export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+        echo "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
+    
+    - name: Create virtual environment
+      run: |
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install wheel setuptools
+        pip install kivy==2.1.0 requests buildozer cython==0.29.36
+    
+    - name: Build APK
+      run: |
+        source venv/bin/activate
+        buildozer android debug
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: android-apk
+        path: bin/*.apk
